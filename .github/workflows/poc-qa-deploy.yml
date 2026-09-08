@@ -13,29 +13,41 @@ concurrency:
 
 jobs:
   # JOB 1: Pull details and trigger the local REST API deployment
-  deploy-to-qa:
-    runs-on: self-hosted # Forces execution to run on your local network runner machine
-    environment: QA # Provides access only to QA-scoped environment secrets
+  extract-and-deploy:
+    runs-on: self-hosted 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Parse Snapshot Metadata
-        id: parse_metadata
+      # 💡 HELPFUL ADDITION: Automatically parse the app acronym and snapshot name 
+      # from the JSON file that BAW just pushed into the repository!
+      - name: Parse BAW Payload Info
+        id: parse_payload
         run: |
-          # Read the JSON descriptor pushed by BAW to extract required acronym and name
-          PROJECT_ACRONYM=$(jq -r '.projectAcronym' *.json)
-          SNAPSHOT_NAME=$(jq -r '.snapshotName' *.json)
-          echo "acronym=$PROJECT_ACRONYM" >> $GITHUB_OUTPUT
-          echo "snapshot=$SNAPSHOT_NAME" >> $GITHUB_OUTPUT
+          # BAW pushes a JSON file with metadata. Let's find it and extract values dynamically.
+          # (Replace 'payload.json' if BAW saves it under a distinct naming convention in your repo)
+          echo "PROCESS_APP=$(jq -r '.projectShortName' payload.json)" >> $GITHUB_ENV
+          echo "SNAPSHOT=$(jq -r '.snapshotName' payload.json)" >> $GITHUB_ENV
 
-      - name: Execute Remote REST Deployment Script
+      - name: Run E2E BAW Deployment
+        env:
+          VERIFY_SSL: "false"
+          CENTER_HOST: ${{ secrets.BAW_CENTER_HOST }}
+          CENTER_PORT: ${{ secrets.BAW_CENTER_PORT }}
+          CENTER_USER: ${{ secrets.BAW_CENTER_USER }}
+          CENTER_PASSWORD: ${{ secrets.BAW_CENTER_PASSWORD }}
+          QA_HOST: ${{ secrets.BAW_QA_HOST }}
+          QA_PORT: ${{ secrets.BAW_QA_PORT }}
+          QA_USER: ${{ secrets.BAW_QA_USER }}
+          QA_PASSWORD: ${{ secrets.BAW_QA_PASSWORD }}
+          
+          # Dynamic Inputs parsed from the Git Commit instead of manual inputs
+          PROCESS_APP_ACRONYM: ${{ env.PROCESS_APP }}
+          SNAPSHOT_NAME: ${{ env.SNAPSHOT }}
+          OFFLINE_SERVER_ACRONYM: "QA_SERVER" 
         run: |
-          /opt/automation/scripts/baw_rest_deploy.sh \
-            "${{ steps.parse_metadata.outputs.acronym }}" \
-            "${{ steps.parse_metadata.outputs.snapshot }}" \
-            "${{ secrets.BAW_REST_USER }}" \
-            "${{ secrets.BAW_REST_PASSWORD }}"
+          chmod +x .github/scripts/poc-qa-swploy.sh
+          .github/scripts/poc-qa-deploy.sh
+
 
   # JOB 2: The Post-Deployment Human Sign-Off Gate
   qa-testing-signoff:
