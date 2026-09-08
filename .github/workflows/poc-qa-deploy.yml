@@ -1,0 +1,49 @@
+name: BAW PoC - QA Deployment and Verification
+
+on:
+  workflow_dispatch: # Temporary manual trigger for PoC connection testing
+  push:
+    paths:
+      - '**.json' # Triggers automatically when BAW Center pushes a metadata file
+
+# Forces snapshots to wait in line so they don't overwrite each other in QA
+concurrency:
+  group: baw-qa-pipeline
+  cancel-in-progress: false
+
+jobs:
+  # JOB 1: Pull details and trigger the local REST API deployment
+  deploy-to-qa:
+    runs-on: self-hosted # Forces execution to run on your local network runner machine
+    environment: QA # Provides access only to QA-scoped environment secrets
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Parse Snapshot Metadata
+        id: parse_metadata
+        run: |
+          # Read the JSON descriptor pushed by BAW to extract required acronym and name
+          PROJECT_ACRONYM=$(jq -r '.projectAcronym' *.json)
+          SNAPSHOT_NAME=$(jq -r '.snapshotName' *.json)
+          echo "acronym=$PROJECT_ACRONYM" >> $GITHUB_OUTPUT
+          echo "snapshot=$SNAPSHOT_NAME" >> $GITHUB_OUTPUT
+
+      - name: Execute Remote REST Deployment Script
+        run: |
+          /opt/automation/scripts/baw_rest_deploy.sh \
+            "${{ steps.parse_metadata.outputs.acronym }}" \
+            "${{ steps.parse_metadata.outputs.snapshot }}" \
+            "${{ secrets.BAW_REST_USER }}" \
+            "${{ secrets.BAW_REST_PASSWORD }}"
+
+  # JOB 2: The Post-Deployment Human Sign-Off Gate
+  qa-testing-signoff:
+    needs: deploy-to-qa # Only fires if Job 1 passes perfectly
+    runs-on: self-hosted
+    environment: QA-Verification # Halts the pipeline here to request manual user approval
+    
+    steps:
+      - name: Confirm Testing Success
+        run: |
+          echo "Verification Complete! The QA Team successfully validated this snapshot version."
