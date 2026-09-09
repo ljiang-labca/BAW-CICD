@@ -3,8 +3,10 @@ name: BAW PoC - QA Deployment and Verification
 on:
   workflow_dispatch: # Temporary manual trigger for PoC connection testing
   push:
+    branches: 
+      - main
     paths:
-      - '**.json' # Triggers automatically when BAW Center pushes a metadata file
+      - 'workflow/**/*.json' # Triggers automatically when BAW Center pushes a metadata file
 
 # Forces snapshots to wait in line so they don't overwrite each other in QA
 concurrency:
@@ -23,10 +25,30 @@ jobs:
       - name: Parse BAW Payload Info
         id: parse_payload
         run: |
-          # BAW pushes a JSON file with metadata. Let's find it and extract values dynamically.
-          # (Replace 'payload.json' if BAW saves it under a distinct naming convention in your repo)
-          echo "PROCESS_APP=$(jq -r '.projectShortName' payload.json)" >> $GITHUB_ENV
-          echo "SNAPSHOT=$(jq -r '.snapshotName' payload.json)" >> $GITHUB_ENV
+          # Find descriptor files matching the actual pattern inside the workflow directory tree
+          JSON_FILE=$(find workflow -name "*_descriptor.json" | head -n 1)
+          
+          if [ -z "$JSON_FILE" ] || [ ! -f "$JSON_FILE" ]; then
+            echo "❌ Error: Could not find any descriptor file ending in _descriptor.json inside the workflow/ folder."
+            exit 1
+          fi
+          
+          echo "📁 Found BAW Descriptor Path: $JSON_FILE"
+          
+          # Exact key updates targeting your verified JSON structure
+          APP_ACRONYM=$(jq -r '.project_short_name // empty' "$JSON_FILE")
+          SNAP_NAME=$(jq -r '.snapshot_name // empty' "$JSON_FILE")
+          
+          if [ -z "$APP_ACRONYM" ] || [ -z "$SNAP_NAME" ]; then
+             echo "❌ Error: Failed to parse project_short_name or snapshot_name from JSON."
+             exit 1
+          fi
+          
+          # Inject configurations directly into the GitHub environment
+          echo "PROCESS_APP_ACRONYM=$APP_ACRONYM" >> $GITHUB_ENV
+          echo "SNAPSHOT_NAME=$SNAP_NAME" >> $GITHUB_ENV
+          
+          echo "✅ Target Successfully Identified: App -> $APP_ACRONYM | Snapshot -> $SNAP_NAME"
 
       - name: Run E2E BAW Deployment
         env:
