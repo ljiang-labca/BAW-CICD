@@ -68,8 +68,9 @@ jobs:
           QA_PASSWORD: ${{ secrets.BAW_QA_PASSWORD }}
           
           # Dynamic Inputs parsed from the Git Commit instead of manual inputs
-          PROCESS_APP_ACRONYM: ${{ env.PROCESS_APP }}
-          SNAPSHOT_NAME: ${{ env.SNAPSHOT }}
+          # 🚀 THE CRITICAL FIX: Make sure the output keys match what Step 1 produced!
+          PROCESS_APP_ACRONYM: ${{ steps.parse_payload.outputs.app_acronym }}
+          SNAPSHOT_NAME: ${{ steps.parse_payload.outputs.snapshot_acronym }}
           OFFLINE_SERVER_ACRONYM: "QA_SERVER" 
         run: |
           chmod +x .github/scripts/poc-qa-deploy.sh
