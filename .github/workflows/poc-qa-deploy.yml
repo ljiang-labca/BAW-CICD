@@ -45,10 +45,15 @@ jobs:
           fi
           
           # Inject configurations directly into the GitHub environment
-          echo "PROCESS_APP_ACRONYM=$APP_ACRONYM" >> $GITHUB_ENV
-          echo "SNAPSHOT_NAME=$SNAP_NAME" >> $GITHUB_ENV
+          #echo "PROCESS_APP_ACRONYM=$APP_ACRONYM" >> $GITHUB_ENV
+          #echo "SNAPSHOT_NAME=$SNAP_NAME" >> $GITHUB_ENV
+          #
+          #echo "✅ Target Successfully Identified: App -> $APP_ACRONYM | Snapshot -> $SNAP_NAME"
           
-          echo "✅ Target Successfully Identified: App -> $APP_ACRONYM | Snapshot -> $SNAP_NAME"
+          echo "✅ Parsed values locally: App=$APP_ACRONYM, Snapshot=$SNAP_NAME"          
+          # 🚀 FIX: Save directly to the step output object so subsequent steps can bind it
+          echo "app_acronym=$APP_ACRONYM" >> "$GITHUB_OUTPUT"
+          echo "snapshot_acronym=$SNAP_NAME" >> "$GITHUB_OUTPUT"          
 
       - name: Run E2E BAW Deployment
         env:
