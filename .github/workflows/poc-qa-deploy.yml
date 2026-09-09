@@ -45,7 +45,7 @@ jobs:
           SNAPSHOT_NAME: ${{ env.SNAPSHOT }}
           OFFLINE_SERVER_ACRONYM: "QA_SERVER" 
         run: |
-          chmod +x .github/scripts/poc-qa-swploy.sh
+          chmod +x .github/scripts/poc-qa-deploy.sh
           .github/scripts/poc-qa-deploy.sh
 
 
