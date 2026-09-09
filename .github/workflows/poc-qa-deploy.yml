@@ -37,7 +37,7 @@ jobs:
           
           # Exact key updates targeting your verified JSON structure
           APP_ACRONYM=$(jq -r '.project_short_name // empty' "$JSON_FILE")
-          SNAP_NAME=$(jq -r '.snapshot_name // empty' "$JSON_FILE")
+          SNAP_NAME=$(jq -r '.snapshot_acronym // empty' "$JSON_FILE")
           
           if [ -z "$APP_ACRONYM" ] || [ -z "$SNAP_NAME" ]; then
              echo "❌ Error: Failed to parse project_short_name or snapshot_name from JSON."
