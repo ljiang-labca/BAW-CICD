@@ -51,7 +51,7 @@ jobs:
 
   # JOB 2: The Post-Deployment Human Sign-Off Gate
   qa-testing-signoff:
-    needs: deploy-to-qa # Only fires if Job 1 passes perfectly
+    needs: extract-and-deploy # Only fires if Job 1 passes perfectly
     runs-on: self-hosted
     environment: QA-Verification # Halts the pipeline here to request manual user approval
     
