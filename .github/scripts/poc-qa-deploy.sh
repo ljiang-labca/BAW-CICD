@@ -104,7 +104,9 @@ log "🔒 Authenticating with Workflow Center..."
 HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -c "$CENTER_COOKIES" \
   -u "${CENTER_USER}:${CENTER_PASSWORD}" \
-  -H "Accept: application/json" \
+  -H "accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_groups": true, "requested_lifetime": 7200}' \
   "${CENTER_BASE}/system/login" \
   -o center_login.json)
 
@@ -180,7 +182,9 @@ log "🔒 Authenticating with QA Server..."
 HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -c "$QA_COOKIES" \
   -u "${QA_USER}:${QA_PASSWORD}" \
-  -H "Accept: application/json" \
+  -H "accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_groups": true, "requested_lifetime": 7200}' \
   "${QA_BASE}/system/login" \
   -o qa_login.json)
 
