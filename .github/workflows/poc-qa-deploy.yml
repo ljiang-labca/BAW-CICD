@@ -44,11 +44,22 @@ jobs:
             SNAP_NAME="${{ inputs.snapshot_acronym }}"
             echo "📋 Manual dispatch — using provided inputs: App=$APP_ACRONYM, Snapshot=$SNAP_NAME"
           else
-            # Find descriptor file pushed by BAW Workflow Center
-            JSON_FILE=$(find workflow -name "*_descriptor.json" | head -n 1)
+            # Find the descriptor file that was added or modified in the triggering commit.
+            # Using git diff against the previous commit ensures we always process the
+            # newly pushed file, not whichever file happens to sort first in the repo.
+            JSON_FILE=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'workflow/**/*_descriptor.json' | head -n 1)
+
+            # Fallback: if this is the very first commit (no HEAD~1), diff against empty tree
+            if [ -z "$JSON_FILE" ]; then
+              JSON_FILE=$(git diff --name-only --diff-filter=AM \
+                $(git hash-object -t tree /dev/null) HEAD -- 'workflow/**/*_descriptor.json' | head -n 1)
+            fi
 
             if [ -z "$JSON_FILE" ] || [ ! -f "$JSON_FILE" ]; then
-              echo "❌ Error: Could not find any descriptor file ending in _descriptor.json inside the workflow/ folder."
+              echo "❌ Error: No *_descriptor.json file was added or modified in this push."
+              echo "   Commit: ${{ github.sha }}"
+              echo "   Changed files in this commit:"
+              git diff --name-only HEAD~1 HEAD || git show --name-only --format="" HEAD
               exit 1
             fi
 
@@ -59,6 +70,9 @@ jobs:
 
             if [ -z "$APP_ACRONYM" ] || [ -z "$SNAP_NAME" ]; then
               echo "❌ Error: Failed to parse project_short_name or snapshot_acronym from JSON."
+              echo "   File: $JSON_FILE"
+              echo "   Contents:"
+              cat "$JSON_FILE"
               exit 1
             fi
           fi
