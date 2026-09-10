@@ -19,6 +19,11 @@ log() {
     echo "$msg" >> "$LOG_FILE"
 }
 
+# is_2xx() returns 0 (true) if the given HTTP status code is in the 2xx range.
+is_2xx() {
+    [[ "$1" -ge 200 && "$1" -lt 300 ]]
+}
+
 # log_file_contents() dumps a file into the log (for response bodies, etc.)
 log_file_contents() {
     local label="$1"
@@ -111,7 +116,7 @@ HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -o center_login.json)
 
 log "  → Login response HTTP status: $HTTP_STATUS"
-if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
+if ! is_2xx "$HTTP_STATUS"; then
     DEPLOY_FAILED=1
     log "❌ Workflow Center authentication failed (HTTP $HTTP_STATUS). Response body:"
     log_file_contents "center_login.json" center_login.json
@@ -129,7 +134,7 @@ HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -o center_queue.json)
 
 log "  → Package request HTTP status: $HTTP_STATUS"
-if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
+if ! is_2xx "$HTTP_STATUS"; then
     DEPLOY_FAILED=1
     log "❌ Package generation initiation failed ($HTTP_STATUS)."
     log_file_contents "center_queue.json" center_queue.json
@@ -164,6 +169,7 @@ HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" \
   -o "$PACKAGE_PATH")
 
 log "  → Download HTTP status: $HTTP_STATUS"
+# Download must be exactly 200 with a non-empty body — 204 No Content would mean an empty file
 if [ "$HTTP_STATUS" -ne 200 ] || [ ! -s "$PACKAGE_PATH" ]; then
     DEPLOY_FAILED=1
     log "❌ Archive download failed ($HTTP_STATUS)."
@@ -189,7 +195,7 @@ HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -o qa_login.json)
 
 log "  → Login response HTTP status: $HTTP_STATUS"
-if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
+if ! is_2xx "$HTTP_STATUS"; then
     DEPLOY_FAILED=1
     log "❌ Target QA Server authentication failed (HTTP $HTTP_STATUS). Response body:"
     log_file_contents "qa_login.json" qa_login.json
@@ -208,7 +214,7 @@ HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -o qa_queue.json)
 
 log "  → Deploy request HTTP status: $HTTP_STATUS"
-if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
+if ! is_2xx "$HTTP_STATUS"; then
     DEPLOY_FAILED=1
     log "❌ Deployment intake failed on QA Server ($HTTP_STATUS)."
     log_file_contents "qa_queue.json" qa_queue.json
