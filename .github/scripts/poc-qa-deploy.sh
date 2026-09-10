@@ -200,14 +200,20 @@ fi
 log "📥 Downloading generated archive to runner machine..."
 HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" \
   -b "$CENTER_COOKIES" \
+  -H "BPMCSRFToken: ${CENTER_CSRF}" \
+  -H "accept: application/octet-stream" \
   "${CENTER_BASE}/std/bpm/containers/${PROCESS_APP_ACRONYM}/versions/${SNAPSHOT_NAME}/install_package" \
   -o "$PACKAGE_PATH")
 
 log "  → Download HTTP status: $HTTP_STATUS"
-# Download must be exactly 200 with a non-empty body — 204 No Content would mean an empty file
-if [ "$HTTP_STATUS" -ne 200 ] || [ ! -s "$PACKAGE_PATH" ]; then
+# Must be 2xx with a non-empty file body
+if ! is_2xx "$HTTP_STATUS" || [ ! -s "$PACKAGE_PATH" ]; then
     DEPLOY_FAILED=1
-    log "❌ Archive download failed ($HTTP_STATUS)."
+    log "❌ Archive download failed (HTTP $HTTP_STATUS)."
+    # If it's still a JSON error body rather than a zip, log it for diagnosis
+    if file "$PACKAGE_PATH" 2>/dev/null | grep -q "text\|JSON"; then
+        log_file_contents "download error response" "$PACKAGE_PATH"
+    fi
     exit 1
 fi
 log "  → Package saved to: $PACKAGE_PATH ($(du -h "$PACKAGE_PATH" | cut -f1))"
