@@ -39,13 +39,14 @@ log_file_contents() {
 
 # poll_async_url() polls a BAW async status URL (returned in the 'url' field of a 202 response)
 # until it reports success, failure, or times out.
-# Usage: poll_async_url <cookies_file> <poll_url> <status_file> <label> <poll_max>
+# Usage: poll_async_url <cookies_file> <csrf_token> <poll_url> <status_file> <label> <poll_max>
 poll_async_url() {
     local cookies_file="$1"
-    local poll_url="$2"
-    local status_file="$3"
-    local label="$4"
-    local poll_max="$5"
+    local csrf_token="$2"
+    local poll_url="$3"
+    local status_file="$4"
+    local label="$5"
+    local poll_max="$6"
     local attempts=0
 
     while true; do
@@ -56,9 +57,15 @@ poll_async_url() {
             exit 1
         fi
 
-        curl -s $CURL_SSL_FLAGS -b "$cookies_file" "$poll_url" -o "$status_file"
-        local STATUS
+        curl -s $CURL_SSL_FLAGS \
+          -b "$cookies_file" \
+          -H "BPMCSRFToken: ${csrf_token}" \
+          -H "accept: application/json" \
+          "$poll_url" -o "$status_file"
+
+        local STATUS ERROR_NUMBER
         STATUS=$(jq -r '.status // empty' "$status_file")
+        ERROR_NUMBER=$(jq -r '.error_number // empty' "$status_file")
         log "⏱️ $label status: ${STATUS:-(empty)} (attempt $attempts/$poll_max)"
 
         if [ "$STATUS" = "success" ]; then
@@ -66,8 +73,13 @@ poll_async_url() {
             return 0
         elif [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
             DEPLOY_FAILED=1
-            log "❌ $label failed."
+            log "❌ $label reported failure."
             log_file_contents "$status_file" "$status_file"
+            exit 1
+        elif [ -n "$ERROR_NUMBER" ]; then
+            # BAW returned an error object (e.g. CWTBG0651E) — fail immediately, do not keep polling
+            DEPLOY_FAILED=1
+            log "❌ $label — BAW returned error $ERROR_NUMBER: $(jq -r '.error_message // empty' "$status_file")"
             exit 1
         elif [ -z "$STATUS" ]; then
             log "⚠️  Empty status — logging raw response for inspection:"
@@ -275,6 +287,6 @@ fi
 log "⏳ Installation submitted. Polling: $QA_POLL_URL"
 
 # Poll using the URL provided by BAW — timeout after 30 minutes (120 × 15s)
-poll_async_url "$QA_COOKIES" "$QA_POLL_URL" "qa_queue_status.json" "QA installation" 120
+poll_async_url "$QA_COOKIES" "$QA_CSRF" "$QA_POLL_URL" "qa_queue_status.json" "QA installation" 120
 
 log "🎉 Success: Snapshot successfully deployed and live in QA!"
