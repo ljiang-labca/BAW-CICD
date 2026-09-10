@@ -2,6 +2,39 @@
 
 set -eo pipefail
 
+# ==============================================================================
+# LOGGING SETUP
+# Each run gets its own timestamped log file under ~/baw-cicd-logs/ on the runner.
+# On failure, response JSON files are preserved alongside the log for inspection.
+# ==============================================================================
+LOG_DIR="${HOME}/baw-cicd-logs"
+mkdir -p "$LOG_DIR"
+RUN_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOG_FILE="${LOG_DIR}/deploy_${RUN_TIMESTAMP}.log"
+
+# log() writes to both stdout (visible in GitHub Actions UI) and the local log file.
+log() {
+    local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+    echo "$msg"
+    echo "$msg" >> "$LOG_FILE"
+}
+
+# log_file_contents() dumps a file into the log (for response bodies, etc.)
+log_file_contents() {
+    local label="$1"
+    local file="$2"
+    log "--- $label ---"
+    if [ -f "$file" ]; then
+        cat "$file" | tee -a "$LOG_FILE"
+    else
+        log "(file not found: $file)"
+    fi
+    log "--- end $label ---"
+}
+
+log "====== BAW CICD Deploy Run Started ======"
+log "Log file on runner: $LOG_FILE"
+
 # --- Configuration Validation ---
 REQUIRED_VARS=(
   CENTER_HOST CENTER_PORT CENTER_USER CENTER_PASSWORD 
@@ -10,19 +43,24 @@ REQUIRED_VARS=(
 )
 for VAR in "${REQUIRED_VARS[@]}"; do
     if [[ -z "${!VAR}" ]]; then
-        echo "❌ Error: Missing environment variable: $VAR"
+        log "❌ Error: Missing environment variable: $VAR"
         exit 1
     fi
 done
+
+# Log config (never log passwords)
+log "CENTER_HOST=$CENTER_HOST  CENTER_PORT=$CENTER_PORT  CENTER_USER=$CENTER_USER"
+log "QA_HOST=$QA_HOST  QA_PORT=$QA_PORT  QA_USER=$QA_USER"
+log "PROCESS_APP_ACRONYM=$PROCESS_APP_ACRONYM  SNAPSHOT_NAME=$SNAPSHOT_NAME  OFFLINE_SERVER_ACRONYM=$OFFLINE_SERVER_ACRONYM"
 
 # --- Configure SSL/TLS Validation Toggle ---
 # Default to true (secure) if not explicitly set to false
 CURL_SSL_FLAGS=""
 if [[ "${VERIFY_SSL,,}" == "false" ]]; then
-    echo "⚠️ Warning: SSL verification is disabled (using self-signed certificates)."
+    log "⚠️ Warning: SSL verification is disabled (using self-signed certificates)."
     CURL_SSL_FLAGS="-k"
 else
-    echo "🔒 SSL verification enabled. Strict certificate authority validation will occur."
+    log "🔒 SSL verification enabled. Strict certificate authority validation will occur."
 fi
 
 # Temp file targets
@@ -30,34 +68,57 @@ CENTER_COOKIES="center_cookies.txt"
 QA_COOKIES="qa_cookies.txt"
 PACKAGE_PATH="/tmp/downloaded_package.zip"
 
+# Tracks whether the run ended in failure so cleanup can preserve debug files
+DEPLOY_FAILED=0
+
 cleanup() {
-    echo "🧹 Wiping runtime session files..."
-    rm -f "$CENTER_COOKIES" "$QA_COOKIES" "$PACKAGE_PATH" \
-          center_login.json center_queue.json center_queue_status.json qa_login.json qa_queue.json qa_queue_status.json
+    log "🧹 Wiping runtime session files..."
+    rm -f "$CENTER_COOKIES" "$QA_COOKIES" "$PACKAGE_PATH"
+
+    if [ "$DEPLOY_FAILED" -eq 1 ]; then
+        # On failure: preserve JSON response files next to the log for post-mortem
+        for f in center_login.json center_queue.json center_queue_status.json \
+                  qa_login.json qa_queue.json qa_queue_status.json; do
+            if [ -f "$f" ]; then
+                cp "$f" "${LOG_DIR}/$(basename "$f" .json)_${RUN_TIMESTAMP}.json"
+                log "📎 Preserved for debug: ${LOG_DIR}/$(basename "$f" .json)_${RUN_TIMESTAMP}.json"
+            fi
+        done
+        log "❌ Run FAILED. Full log + response files saved to: $LOG_DIR"
+    else
+        log "✅ Run completed successfully. Log: $LOG_FILE"
+    fi
+
+    rm -f center_login.json center_queue.json center_queue_status.json \
+          qa_login.json qa_queue.json qa_queue_status.json
 }
 trap cleanup EXIT
 
 # ==============================================================================
 # STAGE 1: WORKFLOW CENTER OPERATIONS (Exporting Package)
 # ==============================================================================
-echo "=== Phase 1: Workflow Center Package Extraction ==="
+log "=== Phase 1: Workflow Center Package Extraction ==="
 CENTER_BASE="https://${CENTER_HOST}:${CENTER_PORT}/ops"
 
-echo "🔒 Authenticating with Workflow Center..."
+log "🔒 Authenticating with Workflow Center..."
 HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -c "$CENTER_COOKIES" \
   -u "${CENTER_USER}:${CENTER_PASSWORD}" \
+  -H "Accept: application/json" \
   "${CENTER_BASE}/system/login" \
   -o center_login.json)
 
+log "  → Login response HTTP status: $HTTP_STATUS"
 if [ "$HTTP_STATUS" -ne 200 ]; then
-    echo "❌ Workflow Center authentication failed ($HTTP_STATUS)."
-    cat center_login.json
+    DEPLOY_FAILED=1
+    log "❌ Workflow Center authentication failed (HTTP $HTTP_STATUS). Response body:"
+    log_file_contents "center_login.json" center_login.json
     exit 1
 fi
 CENTER_CSRF=$(jq -r '.properties.BPMCSRFToken' center_login.json)
+log "  → CSRF token acquired: ${CENTER_CSRF:0:8}... (truncated)"
 
-echo "🚀 Requesting offline package compilation for snapshot: $SNAPSHOT_NAME..."
+log "🚀 Requesting offline package compilation for snapshot: $SNAPSHOT_NAME..."
 HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -b "$CENTER_COOKIES" \
   -H "BPMCSRFToken: ${CENTER_CSRF}" \
@@ -65,64 +126,75 @@ HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   "${CENTER_BASE}/std/bpm/containers/${PROCESS_APP_ACRONYM}/versions/${SNAPSHOT_NAME}/offline_package?server=${OFFLINE_SERVER_ACRONYM}" \
   -o center_queue.json)
 
+log "  → Package request HTTP status: $HTTP_STATUS"
 if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
-    echo "❌ Package generation initiation failed ($HTTP_STATUS)."
-    cat center_queue.json
+    DEPLOY_FAILED=1
+    log "❌ Package generation initiation failed ($HTTP_STATUS)."
+    log_file_contents "center_queue.json" center_queue.json
     exit 1
 fi
 
 CENTER_QUEUE_ID=$(jq -r '.id' center_queue.json)
-echo "⏳ Generation task accepted. Tracking Queue ID: $CENTER_QUEUE_ID"
+log "⏳ Generation task accepted. Tracking Queue ID: $CENTER_QUEUE_ID"
 
 # Poll Center Generation Queue
 while true; do
     curl -s $CURL_SSL_FLAGS -b "$CENTER_COOKIES" "${CENTER_BASE}/system/queue/${CENTER_QUEUE_ID}" -o center_queue_status.json
     STATUS=$(jq -r '.status // empty' center_queue_status.json)
-    echo "⏱️ Extraction Status: $STATUS"
+    log "⏱️ Extraction Status: $STATUS"
     
     if [ "$STATUS" = "success" ]; then
-        echo "✅ Package has been compiled successfully."
+        log "✅ Package has been compiled successfully."
         break
     elif [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
-        echo "❌ Compilation failed on Workflow Center."
-        jq -r '.message' center_queue_status.json
+        DEPLOY_FAILED=1
+        log "❌ Compilation failed on Workflow Center."
+        log_file_contents "center_queue_status.json" center_queue_status.json
         exit 1
     fi
     sleep 15
 done
 
-echo "📥 Downloading generated archive to runner machine..."
+log "📥 Downloading generated archive to runner machine..."
 HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" \
   -b "$CENTER_COOKIES" \
   "${CENTER_BASE}/std/bpm/containers/${PROCESS_APP_ACRONYM}/versions/${SNAPSHOT_NAME}/install_package" \
   -o "$PACKAGE_PATH")
 
+log "  → Download HTTP status: $HTTP_STATUS"
 if [ "$HTTP_STATUS" -ne 200 ] || [ ! -s "$PACKAGE_PATH" ]; then
-    echo "❌ Archive download failed ($HTTP_STATUS)."
+    DEPLOY_FAILED=1
+    log "❌ Archive download failed ($HTTP_STATUS)."
     exit 1
 fi
+log "  → Package saved to: $PACKAGE_PATH ($(du -h "$PACKAGE_PATH" | cut -f1))"
 
 # ==============================================================================
 # STAGE 2: QA SERVER OPERATIONS (Uploading & Deploying Package)
 # ==============================================================================
-echo -e "\n=== Phase 2: QA Workflow Server Deployment ==="
+log ""
+log "=== Phase 2: QA Workflow Server Deployment ==="
 QA_BASE="https://${QA_HOST}:${QA_PORT}/ops"
 
-echo "🔒 Authenticating with QA Server..."
+log "🔒 Authenticating with QA Server..."
 HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -c "$QA_COOKIES" \
   -u "${QA_USER}:${QA_PASSWORD}" \
+  -H "Accept: application/json" \
   "${QA_BASE}/system/login" \
   -o qa_login.json)
 
+log "  → Login response HTTP status: $HTTP_STATUS"
 if [ "$HTTP_STATUS" -ne 200 ]; then
-    echo "❌ Target QA Server authentication failed ($HTTP_STATUS)."
-    cat qa_login.json
+    DEPLOY_FAILED=1
+    log "❌ Target QA Server authentication failed (HTTP $HTTP_STATUS). Response body:"
+    log_file_contents "qa_login.json" qa_login.json
     exit 1
 fi
 QA_CSRF=$(jq -r '.properties.BPMCSRFToken' qa_login.json)
+log "  → CSRF token acquired: ${QA_CSRF:0:8}... (truncated)"
 
-echo "🚀 Deploying and transferring package binary to QA server..."
+log "🚀 Deploying and transferring package binary to QA server..."
 HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -b "$QA_COOKIES" \
   -H "BPMCSRFToken: ${QA_CSRF}" \
@@ -131,27 +203,30 @@ HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   "${QA_BASE}/std/bpm/containers/install?inactive=false&caseOverwrite=true" \
   -o qa_queue.json)
 
+log "  → Deploy request HTTP status: $HTTP_STATUS"
 if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
-    echo "❌ Deployment intake failed on QA Server ($HTTP_STATUS)."
-    cat qa_queue.json
+    DEPLOY_FAILED=1
+    log "❌ Deployment intake failed on QA Server ($HTTP_STATUS)."
+    log_file_contents "qa_queue.json" qa_queue.json
     exit 1
 fi
 
 QA_QUEUE_ID=$(jq -r '.id' qa_queue.json)
-echo "⏳ Installation running asynchronously. Tracking Queue ID: $QA_QUEUE_ID"
+log "⏳ Installation running asynchronously. Tracking Queue ID: $QA_QUEUE_ID"
 
 # Poll QA Installation Queue
 while true; do
     curl -s $CURL_SSL_FLAGS -b "$QA_COOKIES" "${QA_BASE}/system/queue/${QA_QUEUE_ID}" -o qa_queue_status.json
     STATUS=$(jq -r '.status // empty' qa_queue_status.json)
-    echo "⏱️ Installation Status: $STATUS"
+    log "⏱️ Installation Status: $STATUS"
     
     if [ "$STATUS" = "success" ]; then
-        echo "🎉 Success: Snapshot successfully deployed and live in QA!"
+        log "🎉 Success: Snapshot successfully deployed and live in QA!"
         exit 0
     elif [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
-        echo "❌ Installation failed on QA Environment."
-        jq -r '.message' qa_queue_status.json
+        DEPLOY_FAILED=1
+        log "❌ Installation failed on QA Environment."
+        log_file_contents "qa_queue_status.json" qa_queue_status.json
         exit 1
     fi
     sleep 15
