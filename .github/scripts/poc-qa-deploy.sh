@@ -37,6 +37,46 @@ log_file_contents() {
     log "--- end $label ---"
 }
 
+# poll_async_url() polls a BAW async status URL (returned in the 'url' field of a 202 response)
+# until it reports success, failure, or times out.
+# Usage: poll_async_url <cookies_file> <poll_url> <status_file> <label> <poll_max>
+poll_async_url() {
+    local cookies_file="$1"
+    local poll_url="$2"
+    local status_file="$3"
+    local label="$4"
+    local poll_max="$5"
+    local attempts=0
+
+    while true; do
+        attempts=$((attempts + 1))
+        if [ "$attempts" -gt "$poll_max" ]; then
+            DEPLOY_FAILED=1
+            log "❌ Timed out waiting for $label after $((poll_max * 15 / 60)) minutes."
+            exit 1
+        fi
+
+        curl -s $CURL_SSL_FLAGS -b "$cookies_file" "$poll_url" -o "$status_file"
+        local STATUS
+        STATUS=$(jq -r '.status // empty' "$status_file")
+        log "⏱️ $label status: ${STATUS:-(empty)} (attempt $attempts/$poll_max)"
+
+        if [ "$STATUS" = "success" ]; then
+            log "✅ $label completed successfully."
+            return 0
+        elif [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
+            DEPLOY_FAILED=1
+            log "❌ $label failed."
+            log_file_contents "$status_file" "$status_file"
+            exit 1
+        elif [ -z "$STATUS" ]; then
+            log "⚠️  Empty status — logging raw response for inspection:"
+            log_file_contents "$status_file (raw)" "$status_file"
+        fi
+        sleep 15
+    done
+}
+
 log "====== BAW CICD Deploy Run Started ======"
 log "Log file on runner: $LOG_FILE"
 
@@ -141,48 +181,20 @@ if ! is_2xx "$HTTP_STATUS"; then
     exit 1
 fi
 
-# Always log the full response so we can see the exact JSON structure from BAW
+# Log the full response — the 202 body contains a 'url' field pointing to the poll endpoint
 log_file_contents "center_queue.json (package request response)" center_queue.json
 
-# Try both '.id' and '.tracking_id' — BAW versions differ on the field name
-CENTER_QUEUE_ID=$(jq -r '.id // .tracking_id // .queueId // empty' center_queue.json)
-if [ -z "$CENTER_QUEUE_ID" ] || [ "$CENTER_QUEUE_ID" = "null" ]; then
+CENTER_POLL_URL=$(jq -r '.url // empty' center_queue.json)
+if [ -z "$CENTER_POLL_URL" ] || [ "$CENTER_POLL_URL" = "null" ]; then
     DEPLOY_FAILED=1
-    log "❌ Could not extract queue ID from package request response (got: '$CENTER_QUEUE_ID')."
-    log "   Check the response body above to find the correct field name."
+    log "❌ Could not extract async poll URL from package request response."
+    log "   Expected a 'url' field in the response body above."
     exit 1
 fi
-log "⏳ Generation task accepted. Tracking Queue ID: $CENTER_QUEUE_ID"
+log "⏳ Package generation submitted. Polling: $CENTER_POLL_URL"
 
-# Poll Center Generation Queue — timeout after 20 minutes (80 × 15s)
-POLL_ATTEMPTS=0
-POLL_MAX=80
-while true; do
-    POLL_ATTEMPTS=$((POLL_ATTEMPTS + 1))
-    if [ "$POLL_ATTEMPTS" -gt "$POLL_MAX" ]; then
-        DEPLOY_FAILED=1
-        log "❌ Timed out waiting for package generation after $((POLL_MAX * 15 / 60)) minutes."
-        exit 1
-    fi
-
-    curl -s $CURL_SSL_FLAGS -b "$CENTER_COOKIES" "${CENTER_BASE}/system/queue/${CENTER_QUEUE_ID}" -o center_queue_status.json
-    STATUS=$(jq -r '.status // empty' center_queue_status.json)
-    log "⏱️ Extraction Status: $STATUS (attempt $POLL_ATTEMPTS/$POLL_MAX)"
-
-    if [ "$STATUS" = "success" ]; then
-        log "✅ Package has been compiled successfully."
-        break
-    elif [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
-        DEPLOY_FAILED=1
-        log "❌ Compilation failed on Workflow Center."
-        log_file_contents "center_queue_status.json" center_queue_status.json
-        exit 1
-    elif [ -z "$STATUS" ]; then
-        log "⚠️  Empty status — logging raw queue response for inspection:"
-        log_file_contents "center_queue_status.json (raw)" center_queue_status.json
-    fi
-    sleep 15
-done
+# Poll using the URL provided by BAW — timeout after 20 minutes (80 × 15s)
+poll_async_url "$CENTER_COOKIES" "$CENTER_POLL_URL" "center_queue_status.json" "Package generation" 80
 
 log "📥 Downloading generated archive to runner machine..."
 HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" \
@@ -243,45 +255,19 @@ if ! is_2xx "$HTTP_STATUS"; then
     exit 1
 fi
 
-# Always log the full response so we can see the exact JSON structure from BAW
+# Log the full response — the 202 body contains a 'url' field pointing to the poll endpoint
 log_file_contents "qa_queue.json (install request response)" qa_queue.json
 
-# Try both '.id' and '.tracking_id' — BAW versions differ on the field name
-QA_QUEUE_ID=$(jq -r '.id // .tracking_id // .queueId // empty' qa_queue.json)
-if [ -z "$QA_QUEUE_ID" ] || [ "$QA_QUEUE_ID" = "null" ]; then
+QA_POLL_URL=$(jq -r '.url // empty' qa_queue.json)
+if [ -z "$QA_POLL_URL" ] || [ "$QA_POLL_URL" = "null" ]; then
     DEPLOY_FAILED=1
-    log "❌ Could not extract queue ID from install request response (got: '$QA_QUEUE_ID')."
-    log "   Check the response body above to find the correct field name."
+    log "❌ Could not extract async poll URL from install request response."
+    log "   Expected a 'url' field in the response body above."
     exit 1
 fi
-log "⏳ Installation running asynchronously. Tracking Queue ID: $QA_QUEUE_ID"
+log "⏳ Installation submitted. Polling: $QA_POLL_URL"
 
-# Poll QA Installation Queue — timeout after 30 minutes (120 × 15s)
-POLL_ATTEMPTS=0
-POLL_MAX=120
-while true; do
-    POLL_ATTEMPTS=$((POLL_ATTEMPTS + 1))
-    if [ "$POLL_ATTEMPTS" -gt "$POLL_MAX" ]; then
-        DEPLOY_FAILED=1
-        log "❌ Timed out waiting for QA installation after $((POLL_MAX * 15 / 60)) minutes."
-        exit 1
-    fi
+# Poll using the URL provided by BAW — timeout after 30 minutes (120 × 15s)
+poll_async_url "$QA_COOKIES" "$QA_POLL_URL" "qa_queue_status.json" "QA installation" 120
 
-    curl -s $CURL_SSL_FLAGS -b "$QA_COOKIES" "${QA_BASE}/system/queue/${QA_QUEUE_ID}" -o qa_queue_status.json
-    STATUS=$(jq -r '.status // empty' qa_queue_status.json)
-    log "⏱️ Installation Status: $STATUS (attempt $POLL_ATTEMPTS/$POLL_MAX)"
-
-    if [ "$STATUS" = "success" ]; then
-        log "🎉 Success: Snapshot successfully deployed and live in QA!"
-        exit 0
-    elif [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
-        DEPLOY_FAILED=1
-        log "❌ Installation failed on QA Environment."
-        log_file_contents "qa_queue_status.json" qa_queue_status.json
-        exit 1
-    elif [ -z "$STATUS" ]; then
-        log "⚠️  Empty status — logging raw queue response for inspection:"
-        log_file_contents "qa_queue_status.json (raw)" qa_queue_status.json
-    fi
-    sleep 15
-done
+log "🎉 Success: Snapshot successfully deployed and live in QA!"
