@@ -63,26 +63,30 @@ poll_async_url() {
           -H "accept: application/json" \
           "$poll_url" -o "$status_file"
 
-        local STATUS ERROR_NUMBER
-        STATUS=$(jq -r '.status // empty' "$status_file")
+        local STATE ERROR_NUMBER ERR_MSG
+        # BAW queue endpoint uses 'state'; fall back to 'status' for other endpoints
+        STATE=$(jq -r '.state // .status // empty' "$status_file")
         ERROR_NUMBER=$(jq -r '.error_number // empty' "$status_file")
-        log "⏱️ $label status: ${STATUS:-(empty)} (attempt $attempts/$poll_max)"
+        log "⏱️ $label state: ${STATE:-(empty)} (attempt $attempts/$poll_max)"
 
-        if [ "$STATUS" = "success" ]; then
+        if [ "$STATE" = "success" ] || [ "$STATE" = "completed" ]; then
             log "✅ $label completed successfully."
             return 0
-        elif [ "$STATUS" = "failed" ] || [ "$STATUS" = "error" ]; then
+        elif [ "$STATE" = "failure" ] || [ "$STATE" = "failed" ] || [ "$STATE" = "error" ]; then
             DEPLOY_FAILED=1
-            log "❌ $label reported failure."
+            ERR_MSG=$(jq -r '.result.error // .message // empty' "$status_file")
+            log "❌ $label failed: ${ERR_MSG:-(no detail)}"
+            log "   ℹ️  For root cause, check SystemOut.log on the QA BAW server."
             log_file_contents "$status_file" "$status_file"
             exit 1
         elif [ -n "$ERROR_NUMBER" ]; then
-            # BAW returned an error object (e.g. CWTBG0651E) — fail immediately, do not keep polling
+            # BAW returned a top-level error object (e.g. CWTBG0651E) — fail immediately
             DEPLOY_FAILED=1
-            log "❌ $label — BAW returned error $ERROR_NUMBER: $(jq -r '.error_message // empty' "$status_file")"
+            log "❌ $label — BAW error $ERROR_NUMBER: $(jq -r '.error_message // empty' "$status_file")"
+            log "   ℹ️  For root cause, check SystemOut.log on the QA BAW server."
             exit 1
-        elif [ -z "$STATUS" ]; then
-            log "⚠️  Empty status — logging raw response for inspection:"
+        elif [ -z "$STATE" ]; then
+            log "⚠️  Unrecognised response — logging raw for inspection:"
             log_file_contents "$status_file (raw)" "$status_file"
         fi
         sleep 15
