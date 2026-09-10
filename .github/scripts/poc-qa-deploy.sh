@@ -111,13 +111,13 @@ HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -o center_login.json)
 
 log "  → Login response HTTP status: $HTTP_STATUS"
-if [ "$HTTP_STATUS" -ne 200 ]; then
+if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
     DEPLOY_FAILED=1
     log "❌ Workflow Center authentication failed (HTTP $HTTP_STATUS). Response body:"
     log_file_contents "center_login.json" center_login.json
     exit 1
 fi
-CENTER_CSRF=$(jq -r '.properties.BPMCSRFToken' center_login.json)
+CENTER_CSRF=$(jq -r '.csrf_token' center_login.json)
 log "  → CSRF token acquired: ${CENTER_CSRF:0:8}... (truncated)"
 
 log "🚀 Requesting offline package compilation for snapshot: $SNAPSHOT_NAME..."
@@ -189,13 +189,13 @@ HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" -X POST \
   -o qa_login.json)
 
 log "  → Login response HTTP status: $HTTP_STATUS"
-if [ "$HTTP_STATUS" -ne 200 ]; then
+if [ "$HTTP_STATUS" -ne 200 ] && [ "$HTTP_STATUS" -ne 201 ]; then
     DEPLOY_FAILED=1
     log "❌ Target QA Server authentication failed (HTTP $HTTP_STATUS). Response body:"
     log_file_contents "qa_login.json" qa_login.json
     exit 1
 fi
-QA_CSRF=$(jq -r '.properties.BPMCSRFToken' qa_login.json)
+QA_CSRF=$(jq -r '.csrf_token' qa_login.json)
 log "  → CSRF token acquired: ${QA_CSRF:0:8}... (truncated)"
 
 log "🚀 Deploying and transferring package binary to QA server..."
