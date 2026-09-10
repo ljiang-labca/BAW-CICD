@@ -170,4 +170,5 @@ These are invaluable for diagnosing issues — the log file path is printed at t
 ## See Also
 
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues and how to resolve them
+- [Integrating BAW with GitHub](https://www.ibm.com/docs/en/baw/25.0.x?topic=integration-integrating-github) — IBM official documentation for enabling Git integration on Workflow Center
 - [BAW REST API documentation](https://www.ibm.com/docs/en/baw) — IBM BAW REST API reference
