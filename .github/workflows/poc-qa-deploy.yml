@@ -34,6 +34,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need at least HEAD~1 for git diff to identify the triggering file
 
       - name: Parse BAW Payload Info
         id: parse_payload
@@ -44,22 +46,17 @@ jobs:
             SNAP_NAME="${{ inputs.snapshot_acronym }}"
             echo "📋 Manual dispatch — using provided inputs: App=$APP_ACRONYM, Snapshot=$SNAP_NAME"
           else
-            # Find the descriptor file that was added or modified in the triggering commit.
-            # Using git diff against the previous commit ensures we always process the
-            # newly pushed file, not whichever file happens to sort first in the repo.
-            JSON_FILE=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- 'workflow/**/*_descriptor.json' | head -n 1)
-
-            # Fallback: if this is the very first commit (no HEAD~1), diff against empty tree
-            if [ -z "$JSON_FILE" ]; then
-              JSON_FILE=$(git diff --name-only --diff-filter=AM \
-                $(git hash-object -t tree /dev/null) HEAD -- 'workflow/**/*_descriptor.json' | head -n 1)
-            fi
+            # Diff the triggering commit against its parent to find exactly which descriptor
+            # file was added or modified — guarantees we deploy what BAW just pushed,
+            # not whatever file sorts first in the repo.
+            JSON_FILE=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD \
+              -- 'workflow/**/*_descriptor.json' | head -n 1)
 
             if [ -z "$JSON_FILE" ] || [ ! -f "$JSON_FILE" ]; then
-              echo "❌ Error: No *_descriptor.json file was added or modified in this push."
+              echo "❌ Error: No *_descriptor.json was added or modified in this push."
               echo "   Commit: ${{ github.sha }}"
-              echo "   Changed files in this commit:"
-              git diff --name-only HEAD~1 HEAD || git show --name-only --format="" HEAD
+              echo "   Files changed in this commit:"
+              git diff --name-only HEAD~1 HEAD
               exit 1
             fi
 
