@@ -181,20 +181,21 @@ if ! is_2xx "$HTTP_STATUS"; then
     exit 1
 fi
 
-# Log the full response — the 202 body contains a 'url' field pointing to the poll endpoint
-log_file_contents "center_queue.json (package request response)" center_queue.json
+# Always log the raw response so the exact fields are visible
+log_file_contents "center_queue.json (raw package request response)" center_queue.json
 
+# BAW 202 response should contain a 'url' field per the async API spec.
+# If absent (e.g. BAW returned 200 with a different schema), log all keys to help diagnose.
 CENTER_POLL_URL=$(jq -r '.url // empty' center_queue.json)
 if [ -z "$CENTER_POLL_URL" ] || [ "$CENTER_POLL_URL" = "null" ]; then
-    DEPLOY_FAILED=1
-    log "❌ Could not extract async poll URL from package request response."
-    log "   Expected a 'url' field in the response body above."
-    exit 1
+    log "⚠️  No 'url' field in response (HTTP $HTTP_STATUS). Available keys: $(jq -r 'keys[]' center_queue.json 2>/dev/null | tr '\n' ' ')"
+    log "⏳ Falling back: waiting 30s for BAW to complete generation before attempting download..."
+    sleep 30
+else
+    log "⏳ Package generation submitted. Polling: $CENTER_POLL_URL"
+    # Poll using the URL provided by BAW — timeout after 20 minutes (80 × 15s)
+    poll_async_url "$CENTER_COOKIES" "$CENTER_POLL_URL" "center_queue_status.json" "Package generation" 80
 fi
-log "⏳ Package generation submitted. Polling: $CENTER_POLL_URL"
-
-# Poll using the URL provided by BAW — timeout after 20 minutes (80 × 15s)
-poll_async_url "$CENTER_COOKIES" "$CENTER_POLL_URL" "center_queue_status.json" "Package generation" 80
 
 log "📥 Downloading generated archive to runner machine..."
 HTTP_STATUS=$(curl -s $CURL_SSL_FLAGS -w "%{http_code}" \
