@@ -1,12 +1,26 @@
 name: BAW PoC - QA Deployment and Verification
 
 on:
-  workflow_dispatch: # Temporary manual trigger for PoC connection testing
+  workflow_dispatch:
+    inputs:
+      app_acronym:
+        description: "Process App Acronym (e.g. MYAPP) — required for manual runs"
+        required: true
+        type: string
+      snapshot_acronym:
+        description: "Snapshot Acronym (e.g. SS1.0) — required for manual runs"
+        required: true
+        type: string
   push:
-    branches: 
+    branches:
       - main
     paths:
       - 'workflow/**/*.json' # Triggers automatically when BAW Center pushes a metadata file
+
+# Top-level env — change VERIFY_SSL to "true" once real TLS certificates are in place
+env:
+  VERIFY_SSL: "false"
+  OFFLINE_SERVER_ACRONYM: "QA_SERVER"
 
 # Forces snapshots to wait in line so they don't overwrite each other in QA
 concurrency:
@@ -16,48 +30,45 @@ concurrency:
 jobs:
   # JOB 1: Pull details and trigger the local REST API deployment
   extract-and-deploy:
-    runs-on: self-hosted 
+    runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      # 💡 HELPFUL ADDITION: Automatically parse the app acronym and snapshot name 
-      # from the JSON file that BAW just pushed into the repository!
+
       - name: Parse BAW Payload Info
         id: parse_payload
         run: |
-          # Find descriptor files matching the actual pattern inside the workflow directory tree
-          JSON_FILE=$(find workflow -name "*_descriptor.json" | head -n 1)
-          
-          if [ -z "$JSON_FILE" ] || [ ! -f "$JSON_FILE" ]; then
-            echo "❌ Error: Could not find any descriptor file ending in _descriptor.json inside the workflow/ folder."
-            exit 1
+          # On manual dispatch, use the inputs directly — no JSON file to parse
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            APP_ACRONYM="${{ inputs.app_acronym }}"
+            SNAP_NAME="${{ inputs.snapshot_acronym }}"
+            echo "📋 Manual dispatch — using provided inputs: App=$APP_ACRONYM, Snapshot=$SNAP_NAME"
+          else
+            # Find descriptor file pushed by BAW Workflow Center
+            JSON_FILE=$(find workflow -name "*_descriptor.json" | head -n 1)
+
+            if [ -z "$JSON_FILE" ] || [ ! -f "$JSON_FILE" ]; then
+              echo "❌ Error: Could not find any descriptor file ending in _descriptor.json inside the workflow/ folder."
+              exit 1
+            fi
+
+            echo "📁 Found BAW Descriptor Path: $JSON_FILE"
+
+            APP_ACRONYM=$(jq -r '.project_short_name // empty' "$JSON_FILE")
+            SNAP_NAME=$(jq -r '.snapshot_acronym // empty' "$JSON_FILE")
+
+            if [ -z "$APP_ACRONYM" ] || [ -z "$SNAP_NAME" ]; then
+              echo "❌ Error: Failed to parse project_short_name or snapshot_acronym from JSON."
+              exit 1
+            fi
           fi
-          
-          echo "📁 Found BAW Descriptor Path: $JSON_FILE"
-          
-          # Exact key updates targeting your verified JSON structure
-          APP_ACRONYM=$(jq -r '.project_short_name // empty' "$JSON_FILE")
-          SNAP_NAME=$(jq -r '.snapshot_acronym // empty' "$JSON_FILE")
-          
-          if [ -z "$APP_ACRONYM" ] || [ -z "$SNAP_NAME" ]; then
-             echo "❌ Error: Failed to parse project_short_name or snapshot_name from JSON."
-             exit 1
-          fi
-          
-          # Inject configurations directly into the GitHub environment
-          #echo "PROCESS_APP_ACRONYM=$APP_ACRONYM" >> $GITHUB_ENV
-          #echo "SNAPSHOT_NAME=$SNAP_NAME" >> $GITHUB_ENV
-          #
-          #echo "✅ Target Successfully Identified: App -> $APP_ACRONYM | Snapshot -> $SNAP_NAME"
-          
-          echo "✅ Parsed values locally: App=$APP_ACRONYM, Snapshot=$SNAP_NAME"          
-          # 🚀 FIX: Save directly to the step output object so subsequent steps can bind it
+
+          echo "✅ Target identified: App=$APP_ACRONYM, Snapshot=$SNAP_NAME"
           echo "app_acronym=$APP_ACRONYM" >> "$GITHUB_OUTPUT"
-          echo "snapshot_acronym=$SNAP_NAME" >> "$GITHUB_OUTPUT"          
+          echo "snapshot_acronym=$SNAP_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Run E2E BAW Deployment
         env:
-          VERIFY_SSL: "false"
           CENTER_HOST: ${{ secrets.BAW_CENTER_HOST }}
           CENTER_PORT: ${{ secrets.BAW_CENTER_PORT }}
           CENTER_USER: ${{ secrets.BAW_CENTER_USER }}
@@ -66,23 +77,20 @@ jobs:
           QA_PORT: ${{ secrets.BAW_QA_PORT }}
           QA_USER: ${{ secrets.BAW_QA_USER }}
           QA_PASSWORD: ${{ secrets.BAW_QA_PASSWORD }}
-          
-          # Dynamic Inputs parsed from the Git Commit instead of manual inputs
-          # 🚀 THE CRITICAL FIX: Make sure the output keys match what Step 1 produced!
           PROCESS_APP_ACRONYM: ${{ steps.parse_payload.outputs.app_acronym }}
           SNAPSHOT_NAME: ${{ steps.parse_payload.outputs.snapshot_acronym }}
-          OFFLINE_SERVER_ACRONYM: "QA_SERVER" 
         run: |
+          # chmod is here because self-hosted runners may not preserve the execute bit
           chmod +x .github/scripts/poc-qa-deploy.sh
           .github/scripts/poc-qa-deploy.sh
-
 
   # JOB 2: The Post-Deployment Human Sign-Off Gate
   qa-testing-signoff:
     needs: extract-and-deploy # Only fires if Job 1 passes perfectly
     runs-on: self-hosted
     environment: QA-Verification # Halts the pipeline here to request manual user approval
-    
+    timeout-minutes: 1440 # 24 hours — prevents the approval gate from blocking the queue indefinitely
+
     steps:
       - name: Confirm Testing Success
         run: |
