@@ -171,6 +171,34 @@ These are invaluable for diagnosing issues — the log file path is printed at t
 
 ---
 
+## IBM Bob Skill
+
+This repository includes a **Bob skill** that gives IBM Bob AI assistant full knowledge of this pipeline — setup steps, REST API behaviours, common errors, and extension patterns.
+
+When the skill is installed, Bob will automatically activate it whenever you ask about BAW CICD pipelines, troubleshoot a failing run, or need to adapt the pipeline for a new client.
+
+### Install the skill
+
+**Global** (available in all your workspaces):
+```bash
+mkdir -p ~/.bob/skills/baw-cicd-pipeline
+cp .bob/skills/baw-cicd-pipeline/SKILL.md ~/.bob/skills/baw-cicd-pipeline/SKILL.md
+```
+
+**Workspace** (available only when this repo is open — already active if you cloned this repo):
+The skill is already at `.bob/skills/baw-cicd-pipeline/SKILL.md` in this repo — no action needed.
+
+### What the skill covers
+- BAW Git integration setup (including the API endpoint gotcha)
+- GitHub secrets, self-hosted runner, and environment approval gate setup
+- BAW REST API specifics — correct HTTP status codes, CSRF token field names, async response schemas
+- Shell script structure and logging approach
+- All known error codes and their fixes (CWTBG0651E, CWTBG0737E, etc.)
+- Checklist for adapting the pipeline for a new client
+- Roadmap of extensions (multi-environment, rollback, notifications)
+
+---
+
 ## See Also
 
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues and how to resolve them
