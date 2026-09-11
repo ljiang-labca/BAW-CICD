@@ -13,3 +13,6 @@ center_queue_status.json
 qa_login.json
 qa_queue.json
 qa_queue_status.json
+
+# Local documentation artifacts — kept locally, not tracked in repo
+docs/
