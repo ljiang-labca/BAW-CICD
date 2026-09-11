@@ -46,7 +46,11 @@ Pipeline Complete ✅
 #### 1. Enable Git integration on Workflow Center
 In your BAW Workflow Center administration console:
 - Navigate to **Admin** → **Workflow Center Settings** → **Git Integration**
-- Configure the GitHub repo URL: `https://github.com/<org>/BAW-CICD.git`
+- Configure the GitHub repo URL using the **GitHub API endpoint** (not the regular repo URL):
+  ```
+  https://api.github.com/repos/<org>/BAW-CICD
+  ```
+  > ⚠️ **Note:** BAW requires the API endpoint format — using the regular `https://github.com/<org>/BAW-CICD.git` URL will not work. Do not include `.git` at the end.
 - Provide a GitHub Personal Access Token (PAT) with `repo` write scope
 - Set the target branch to `main`
 - Set the push path to `workflow/` — BAW will push descriptor JSON files here
