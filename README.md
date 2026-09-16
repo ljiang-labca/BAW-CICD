@@ -43,17 +43,33 @@ Pipeline Complete ✅
 
 ### BAW Side
 
-#### 1. Enable Git integration on Workflow Center
-In your BAW Workflow Center administration console:
-- Navigate to **Admin** → **Workflow Center Settings** → **Git Integration**
-- Configure the GitHub repo URL using the **GitHub API endpoint** (not the regular repo URL):
-  ```
-  https://api.github.com/repos/<org>/BAW-CICD
-  ```
-  > ⚠️ **Note:** BAW requires the API endpoint format — using the regular `https://github.com/<org>/BAW-CICD.git` URL will not work. Do not include `.git` at the end.
-- Provide a GitHub Personal Access Token (PAT) with `repo` write scope
-- Set the target branch to `main`
-- Set the push path to `workflow/` — BAW will push descriptor JSON files here
+#### 1. Configure the BAW Server for GitHub Integration
+For an on-premises BAW installation, enabling GitHub integration requires four server-side configuration steps:
+
+**a) Trust GitHub's SSL Certificate**
+- Open the **WebSphere Administrative Console**
+- Navigate to **Security → SSL certificate and key management → Key stores and certificates → cellDefaultTrustStore → Signer certificates**
+- Click **Retrieve from port**, enter `api.github.com` as the host and `443` as the port, then save the certificate
+
+**b) Create a J2C Authentication Alias**
+- Navigate to **Security → Global security → Java Authentication and Authorization Service → J2C authentication data**
+- Create a new alias (e.g. `Git-Auth-Alias`) using your GitHub username as the user ID and a **Personal Access Token (PAT)** with `repo` write scope as the password
+
+**c) Update `100Custom.xml`**
+Add the following snippet to your `100Custom.xml` file, replacing the alias name if you used a different one in the previous step:
+```xml
+<server>
+  <git-configuration merge="replace">
+    <git-endpoint-url>https://github.com</git-endpoint-url>
+    <git-auth-alias-name>Git-Auth-Alias</git-auth-alias-name>
+  </git-configuration>
+</server>
+```
+> ⚠️ **Note:** The `<git-endpoint-url>` must be `https://github.com` — do **not** use the repository-specific URL here.
+
+**d) Restart and Verify**
+- Synchronize your nodes and restart the BAW environment
+- Confirm the settings were applied by inspecting `TeamWorksConfiguration.running.xml`
 
 #### 2. Create a named snapshot
 When a developer is ready to promote to QA:
