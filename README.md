@@ -60,12 +60,12 @@ Add the following snippet to your `100Custom.xml` file, replacing the alias name
 ```xml
 <server>
   <git-configuration merge="replace">
-    <git-endpoint-url>https://github.com</git-endpoint-url>
+    <git-endpoint-url>https://api.github.com/repos/myorg/myrepo</git-endpoint-url>
     <git-auth-alias-name>Git-Auth-Alias</git-auth-alias-name>
   </git-configuration>
 </server>
 ```
-> ⚠️ **Note:** The `<git-endpoint-url>` must be `https://github.com` — do **not** use the repository-specific URL here.
+> ⚠️ **Note:** The `<git-endpoint-url>` must use the GitHub API URL format — e.g. `https://api.github.com/repos/myorg/myrepo`. Replace `myorg` and `myrepo` with your actual GitHub organisation and repository name.
 
 **d) Restart and Verify**
 - Synchronize your nodes and restart the BAW environment
